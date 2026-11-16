@@ -1,0 +1,21 @@
+{
+  "name": "realtime-chat",
+  "private": true,
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev:api": "npm --workspace apps/api run start:dev",
+    "dev:web": "npm --workspace apps/web run dev",
+    "dev:android": "cd apps/mobile && npm run android",
+    "build:api": "npm --workspace apps/api run build",
+    "build:web": "npm --workspace apps/web run build",
+    "db:generate": "prisma generate --schema=prisma/schema.prisma",
+    "db:migrate": "prisma migrate dev --schema=prisma/schema.prisma"
+  },
+  "devDependencies": {
+    "prisma": "^6.19.0",
+    "typescript": "^5.8.3"
+  }
+}

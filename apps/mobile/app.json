@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "Realtime Chat",
+    "slug": "realtime-chat-android",
+    "version": "1.0.0",
+    "scheme": "realtimechat",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "android": {
+      "googleServicesFile": "./google-services.json",
+      "package": "com.realtimechat.app",
+      "versionCode": 1,
+      "permissions": [
+        "POST_NOTIFICATIONS",
+        "USE_FULL_SCREEN_INTENT",
+        "VIBRATE",
+        "WAKE_LOCK",
+        "CAMERA",
+        "RECORD_AUDIO"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "@react-native-firebase/app",
+      "./plugins/android-call/withAndroidCall.js"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

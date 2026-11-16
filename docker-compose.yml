@@ -1,0 +1,49 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-chat}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-chatdb}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chat} -d ${POSTGRES_DB:-chatdb}"], interval: 5s, timeout: 3s, retries: 20}
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports: ["8025:8025"]
+  coturn:
+    image: coturn/coturn:4.6
+    restart: unless-stopped
+    network_mode: host
+    command: ["-n", "--log-file=stdout", "--realm=${TURN_REALM:-realtimechat}", "--fingerprint", "--lt-cred-mech", "--use-auth-secret", "--static-auth-secret=${TURN_SECRET:?Set TURN_SECRET}", "--listening-port=3478", "--min-port=49160", "--max-port=49200", "--no-multicast-peers", "--no-cli"]
+  api:
+    build: {context: ., dockerfile: apps/api/Dockerfile}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      WEB_ORIGIN: "${WEB_ORIGIN:-http://localhost:3000}"
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-chat}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-chatdb}?schema=public"
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET}
+      APP_URL: "${APP_URL:-http://localhost:3000}"
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      MAIL_FROM: "${MAIL_FROM:-Realtime Chat <noreply@example.test>}"
+      TURN_HOST: ${TURN_HOST:-localhost}
+      TURN_SECRET: ${TURN_SECRET:?Set TURN_SECRET}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+      FIREBASE_CLIENT_EMAIL: ${FIREBASE_CLIENT_EMAIL:-}
+      FIREBASE_PRIVATE_KEY: ${FIREBASE_PRIVATE_KEY:-}
+    ports: ["4000:4000"]
+    depends_on: {postgres: {condition: service_healthy}, mailpit: {condition: service_started}}
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: "${NEXT_PUBLIC_API_URL:-http://localhost:4000}"
+    restart: unless-stopped
+    ports: ["3000:3000"]
+    depends_on: [api]
+volumes: {pgdata: {}}

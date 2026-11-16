@@ -1,0 +1,9 @@
+**/node_modules
+**/.next
+**/dist
+**/android
+**/ios
+apps/mobile/google-services.json
+.env
+.git
+*.log
