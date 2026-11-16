@@ -1,10 +1,12 @@
 FROM node:22-bookworm-slim AS build
+RUN apt-get update && apt-get install -y openssl && rm -rf /var/lib/apt/lists/* 
 WORKDIR /app
 COPY package.json ./
 COPY apps/api/package.json ./apps/api/package.json
 COPY apps/web/package.json ./apps/web/package.json
 RUN npm install
 COPY apps/web ./apps/web
+COPY locales ./locales
 ARG NEXT_PUBLIC_API_URL=http://localhost:4000
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 RUN npm --workspace apps/web run build

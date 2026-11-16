@@ -1,14 +1,28 @@
+
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
+import { useTranslations } from 'next-intl';
+import LanguageSwitcher from '../../components/language-switcher';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
-type U = { id: string; email: string; displayName: string };
-type C = { id: string; members: { user: U }[]; messages: any[] };
+type U = {
+  id: string;
+  email: string;
+  displayName: string;
+};
+
+type C = {
+  id: string;
+  members: { user: U }[];
+  messages: any[];
+};
 
 export default function Page() {
+  const t = useTranslations();
+
   const [token, setToken] = useState('');
   const [me, setMe] = useState<U | null>(null);
   const [email, setEmail] = useState('');
@@ -24,13 +38,13 @@ export default function Page() {
   const [incoming, setIncoming] = useState<any>(null);
   const [call, setCall] = useState<any>(null);
   const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
+
   const sock = useRef<Socket | null>(null);
   const pc = useRef<RTCPeerConnection | null>(null);
   const stream = useRef<MediaStream | null>(null);
   const callRef = useRef<any>(null);
   const pendingCandidates = useRef<RTCIceCandidateInit[]>([]);
 
-  // Video elementləri üçün ref-lər (querySelector əvəzinə)
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -43,25 +57,36 @@ export default function Page() {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: body ? JSON.stringify(body) : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
     });
+
     const d = await r.json();
-    if (!r.ok) throw Error(d.message || 'Xəta');
+
+    if (!r.ok) {
+      throw Error(d.message || t('error'));
+    }
+
     return d;
   };
 
   async function load() {
-    const [u, c] = await Promise.all([req('/users'), req('/conversations')]);
+    const [u, c] = await Promise.all([
+      req('/users'),
+      req('/conversations'),
+    ]);
+
     setUsers(u);
     setConvs(c);
   }
 
-  // ========== SESSION ==========
+  // SESSION
   useEffect(() => {
     const savedToken = localStorage.getItem('realtime_chat_token');
     const savedUser = localStorage.getItem('realtime_chat_user');
+
     if (savedToken) {
       setToken(savedToken);
+
       if (savedUser) {
         try {
           setMe(JSON.parse(savedUser));
@@ -72,7 +97,7 @@ export default function Page() {
     }
   }, []);
 
-  // ========== SOCKET ==========
+  // SOCKET
   useEffect(() => {
     if (!token) return;
 
@@ -82,55 +107,69 @@ export default function Page() {
       auth: { token },
       transports: ['websocket'],
     });
+
     sock.current = s;
 
     s.on('presence:snapshot', (ids: string[]) => {
       setOnlineUsers(new Set(ids));
     });
 
-    s.on('presence:update', ({ userId, online }: { userId: string; online: boolean }) => {
-      setOnlineUsers(previous => {
-        const next = new Set(previous);
-        if (online) next.add(userId);
-        else next.delete(userId);
-        return next;
-      });
-    });
+    s.on(
+      'presence:update',
+      ({ userId, online }: { userId: string; online: boolean }) => {
+        setOnlineUsers((previous) => {
+          const next = new Set(previous);
+
+          if (online) next.add(userId);
+          else next.delete(userId);
+
+          return next;
+        });
+      }
+    );
 
     s.on('message:new', (m: any) => {
       if (active?.id === m.conversationId) {
         setMsgs((v) => [...v, m]);
       }
-      load().catch(() => { });
+
+      load().catch(() => {});
     });
 
     s.on('call:incoming', (c: any) => {
       setIncoming(c);
-      setStatus('Gələn zəng: ' + (c.callerName || 'naməlum istifadəçi'));
+      setStatus(
+        t('incomingCall') + ': ' + (c.callerName || t('unknownUser'))
+      );
     });
 
-    // Caller tərəfi: qəbul edildi → offer göndər
     s.on('call:accepted', () => {
       makePeer(callRef.current, true);
     });
 
-    // Signaling
+    // WEBRTC SIGNALING
     s.on('call:signal', async ({ signal }: any) => {
       try {
         if (!signal) return;
 
-        // OFFER gəldi (callee tərəfi)
+        // OFFER
         if (signal.type === 'offer') {
           if (!pc.current) {
             await makePeer(callRef.current, false);
           }
-          const p = pc.current!;
-          await p.setRemoteDescription(new RTCSessionDescription(signal));
 
-          // Gözləyən candidate-ləri əlavə et
+          const p = pc.current!;
+
+          await p.setRemoteDescription(
+            new RTCSessionDescription(signal)
+          );
+
           for (const candidate of pendingCandidates.current) {
-            await p.addIceCandidate(new RTCIceCandidate(candidate));
+            await p.addIceCandidate(
+              new RTCIceCandidate(candidate)
+            );
           }
+
           pendingCandidates.current = [];
 
           const answer = await p.createAnswer();
@@ -142,54 +181,68 @@ export default function Page() {
           });
         }
 
-        // ANSWER gəldi (caller tərəfi)
+        // ANSWER
         else if (signal.type === 'answer' && pc.current) {
-          await pc.current.setRemoteDescription(new RTCSessionDescription(signal));
+          await pc.current.setRemoteDescription(
+            new RTCSessionDescription(signal)
+          );
 
           for (const candidate of pendingCandidates.current) {
-            await pc.current.addIceCandidate(new RTCIceCandidate(candidate));
+            await pc.current.addIceCandidate(
+              new RTCIceCandidate(candidate)
+            );
           }
+
           pendingCandidates.current = [];
         }
 
-        // ICE candidate
+        // ICE CANDIDATE
         else if (signal.candidate) {
           if (pc.current?.remoteDescription) {
-            await pc.current.addIceCandidate(new RTCIceCandidate(signal));
+            await pc.current.addIceCandidate(
+              new RTCIceCandidate(signal)
+            );
           } else {
             pendingCandidates.current.push(signal);
           }
         }
       } catch (err: any) {
-        setStatus('Bağlantı xətası: ' + (err.message || String(err)));
+        setStatus(
+          t('connectionError') + ': ' + (err.message || String(err))
+        );
       }
     });
 
     s.on('call:ended', () => end(false));
+
     s.on('call:expired', () => {
-      setStatus('Zəngə cavab verilmədi');
+      setStatus(t('noAnswer'));
       end(false);
     });
+
     s.on('call:rejected', () => {
-      setStatus('Zəng rədd edildi');
+      setStatus(t('callRejected'));
       end(false);
     });
 
     return () => {
       s.disconnect();
+      sock.current = null;
     };
   }, [token, active?.id]);
 
-  // Messages
+  // MESSAGES
   useEffect(() => {
-    if (active) {
+    if (active && token) {
       req(`/conversations/${active.id}/messages`)
         .then(setMsgs)
         .catch((e) => setStatus(e.message));
+    } else {
+      setMsgs([]);
     }
   }, [active?.id, token]);
 
-  // ========== AUTH ==========
+  // AUTH
   async function auth() {
     try {
       if (reg) {
@@ -198,38 +251,49 @@ export default function Page() {
           password: pass,
           displayName: name,
         });
-        setStatus(d.message + ' — Mailpit: localhost:8025');
+
+        setStatus(
+          d.message || t('registrationSuccess')
+        );
       } else {
-        const d = await req('/auth/login', 'POST', { email, password: pass });
+        const d = await req('/auth/login', 'POST', {
+          email,
+          password: pass,
+        });
+
         localStorage.setItem('realtime_chat_token', d.accessToken);
-        localStorage.setItem('realtime_chat_user', JSON.stringify(d.user));
+        localStorage.setItem(
+          'realtime_chat_user',
+          JSON.stringify(d.user)
+        );
+
         setToken(d.accessToken);
         setMe(d.user);
+        setStatus('');
       }
     } catch (e: any) {
       setStatus(e.message);
     }
   }
 
-  // ========== WEBRTC CORE ==========
+  // WEBRTC CORE
   async function makePeer(c: any, initiator: boolean) {
     if (!c) {
-      setStatus('Zəng məlumatı tapılmadı');
+      setStatus(t('callNotFound'));
       return;
     }
 
     try {
-      // Köhnə bağlantını təmizlə
       if (pc.current) {
         pc.current.close();
         pc.current = null;
       }
 
       const cfg = await req('/calls/ice-config');
+
       const p = new RTCPeerConnection(cfg);
       pc.current = p;
 
-      // ICE candidate göndər
       p.onicecandidate = (e) => {
         if (e.candidate) {
           sock.current?.emit('call:signal', {
@@ -239,53 +303,60 @@ export default function Page() {
         }
       };
 
-      // Remote track gəldi
       p.ontrack = (e) => {
         const remote = remoteVideoRef.current;
+
         if (remote) {
-          const mediaStream = e.streams?.[0] || new MediaStream([e.track]);
+          const mediaStream =
+            e.streams?.[0] || new MediaStream([e.track]);
+
           remote.srcObject = mediaStream;
-          remote.play().catch(() => { });
+          remote.play().catch(() => {});
         }
       };
 
-      // Bağlantı vəziyyəti
       p.onconnectionstatechange = () => {
-        if (p.connectionState === 'failed' || p.connectionState === 'disconnected') {
-          setStatus('Bağlantı kəsildi');
+        if (
+          p.connectionState === 'failed' ||
+          p.connectionState === 'disconnected'
+        ) {
+          setStatus(t('connectionLost'));
         }
+
         if (p.connectionState === 'closed') {
           end(false);
         }
       };
 
-      // Media al
       const constraints: MediaStreamConstraints = {
         audio: true,
-        video: c.type === 'VIDEO' ? { facingMode: 'user' } : false,
+        video:
+          c.type === 'VIDEO'
+            ? { facingMode: 'user' }
+            : false,
       };
 
-      const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+      const mediaStream =
+        await navigator.mediaDevices.getUserMedia(constraints);
+
       stream.current = mediaStream;
 
-      // Track-ləri əlavə et
       mediaStream.getTracks().forEach((track) => {
         p.addTrack(track, mediaStream);
       });
 
-      // Local video göstər
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = mediaStream;
-        localVideoRef.current.muted = true; // echo olmasın
-        localVideoRef.current.play().catch(() => { });
+        localVideoRef.current.muted = true;
+        localVideoRef.current.play().catch(() => {});
       }
 
-      // Offer göndər (yalnız initiator)
       if (initiator) {
         const offer = await p.createOffer({
           offerToReceiveAudio: true,
           offerToReceiveVideo: c.type === 'VIDEO',
         });
+
         await p.setLocalDescription(offer);
 
         sock.current?.emit('call:signal', {
@@ -295,86 +366,112 @@ export default function Page() {
       }
     } catch (err: any) {
       console.error(err);
+
       setStatus(
         err.name === 'NotAllowedError'
-          ? 'Kamera / mikrofon icazəsi verilmədi'
-          : 'Media xətası: ' + (err.message || String(err))
+          ? t('permissionDenied')
+          : t('mediaError') + ': ' + (err.message || String(err))
       );
+
       end(false);
     }
   }
 
-  // ========== CALL ACTIONS ==========
+  // CALL ACTIONS
   async function startCall(u: U, type: 'AUDIO' | 'VIDEO') {
     try {
-      setStatus(type === 'VIDEO' ? 'Video zəng başladılır...' : 'Səsli zəng başladılır...');
-      const c = await req('/calls', 'POST', { calleeId: u.id, type });
+      setStatus(
+        type === 'VIDEO'
+          ? t('startingVideoCall')
+          : t('startingVoiceCall')
+      );
+
+      const c = await req('/calls', 'POST', {
+        calleeId: u.id,
+        type,
+      });
+
       setCall({ ...c, type, role: 'caller' });
       setStatus('');
     } catch (e: any) {
-      setStatus('Zəng baş tutmadı: ' + e.message);
+      setStatus(t('callError') + ': ' + e.message);
     }
   }
 
   function end(emit = true) {
     if (emit && callRef.current) {
-      sock.current?.emit('call:end', { callId: callRef.current.id });
+      sock.current?.emit('call:end', {
+        callId: callRef.current.id,
+      });
     }
 
-    // Stream dayandır
     if (stream.current) {
-      stream.current.getTracks().forEach((t) => t.stop());
+      stream.current.getTracks().forEach((track) => track.stop());
       stream.current = null;
     }
 
-    // Peer bağla
     if (pc.current) {
       pc.current.close();
       pc.current = null;
     }
 
-    // Video elementləri təmizlə
-    if (localVideoRef.current) localVideoRef.current.srcObject = null;
-    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = null;
+    }
+
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = null;
+    }
 
     pendingCandidates.current = [];
+
     setCall(null);
     setIncoming(null);
   }
 
-  // ========== UI ==========
+  // AUTH SCREEN
   if (!token) {
     return (
       <div className="auth-screen">
         <div className="auth-card">
-          <div className="logo">Realtime Chat</div>
-          <h1>{reg ? 'Qeydiyyat' : 'Daxil ol'}</h1>
+          <div className="user-info" style={{ justifyContent: 'flex-end' }}>
+            <LanguageSwitcher />
+          </div>
+
+          <div className="logo">{t('appName')}</div>
+
+          <h1>{reg ? t('register') : t('login')}</h1>
 
           {reg && (
             <input
-              placeholder="Ad soyad"
+              placeholder={t('displayName')}
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
           )}
+
           <input
-            placeholder="E-poçt"
+            placeholder={t('email')}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
+
           <input
-            placeholder="Şifrə"
+            placeholder={t('password')}
             type="password"
             value={pass}
             onChange={(e) => setPass(e.target.value)}
           />
 
           <button className="btn primary full" onClick={auth}>
-            {reg ? 'Qeydiyyatdan keç' : 'Daxil ol'}
+            {reg ? t('register') : t('login')}
           </button>
 
-          <button className="btn ghost full" onClick={() => setReg(!reg)}>
-            {reg ? 'Artıq hesabım var' : 'Hesab yarat'}
+          <button
+            className="btn ghost full"
+            onClick={() => setReg(!reg)}
+          >
+            {reg ? t('backToLogin') : t('createAccount')}
           </button>
 
           {status && <p className="status">{status}</p>}
@@ -383,22 +480,30 @@ export default function Page() {
     );
   }
 
+  // MAIN APP
   return (
     <div className="app">
       <header className="topbar">
-        <div className="logo">Realtime Chat</div>
+        <div className="logo">{t('appName')}</div>
+
         <div className="user-info">
+          <LanguageSwitcher />
+
           <span>{me?.displayName}</span>
+
           <button
             className="btn ghost small"
             onClick={() => {
+              end(false);
+
               localStorage.removeItem('realtime_chat_token');
               localStorage.removeItem('realtime_chat_user');
+
               setToken('');
               setMe(null);
             }}
           >
-            Çıxış
+            {t('logout')}
           </button>
         </div>
       </header>
@@ -406,18 +511,29 @@ export default function Page() {
       <div className="layout">
         <aside className="sidebar">
           <div className="section">
-            <h3>Söhbətlər</h3>
+            <h3>{t('conversations')}</h3>
+
             <div className="list">
               {convs.map((c) => {
-                const other = c.members?.find((x) => x.user.id !== me?.id)?.user;
+                const other = c.members?.find(
+                  (x) => x.user.id !== me?.id
+                )?.user;
+
                 return (
                   <button
                     key={c.id}
-                    className={`list-item ${active?.id === c.id ? 'active' : ''}`}
+                    className={`list-item ${
+                      active?.id === c.id ? 'active' : ''
+                    }`}
                     onClick={() => setActive(c)}
                   >
-                    <div className="avatar">{other?.displayName?.[0] || '?'}</div>
-                    <span>{other?.displayName || 'Naməlum'}</span>
+                    <div className="avatar">
+                      {other?.displayName?.[0] || '?'}
+                    </div>
+
+                    <span>
+                      {other?.displayName || t('unknownUser')}
+                    </span>
                   </button>
                 );
               })}
@@ -425,7 +541,8 @@ export default function Page() {
           </div>
 
           <div className="section">
-            <h3>İstifadəçilər</h3>
+            <h3>{t('users')}</h3>
+
             <div className="list">
               {users
                 .filter((u) => u.id !== me?.id)
@@ -434,29 +551,57 @@ export default function Page() {
                     key={u.id}
                     className="list-item"
                     onClick={async () => {
-                      const c = await req('/conversations', 'POST', {
-                        otherUserId: u.id,
-                      });
-                      await load();
-                      setActive(c);
+                      try {
+                        const c = await req('/conversations', 'POST', {
+                          otherUserId: u.id,
+                        });
+
+                        await load();
+                        setActive(c);
+                      } catch (e: any) {
+                        setStatus(e.message);
+                      }
                     }}
                   >
-                    <div className="avatar" style={{ position: 'relative' }}>
+                    <div
+                      className="avatar"
+                      style={{ position: 'relative' }}
+                    >
                       {u.displayName[0]}
-                      <span style={{
-                        position: 'absolute', right: 0, bottom: 0,
-                        width: 11, height: 11, borderRadius: '50%',
-                        background: onlineUsers.has(u.id) ? '#22c55e' : '#9ca3af',
-                        border: '2px solid white'
-                      }} />
+
+                      <span
+                        style={{
+                          position: 'absolute',
+                          right: 0,
+                          bottom: 0,
+                          width: 11,
+                          height: 11,
+                          borderRadius: '50%',
+                          background: onlineUsers.has(u.id)
+                            ? '#22c55e'
+                            : '#9ca3af',
+                          border: '2px solid white',
+                        }}
+                      />
                     </div>
+
                     <span>
                       {u.displayName}
-                      <small style={{ display: 'block', fontSize: 11, color: onlineUsers.has(u.id) ? '#16a34a' : '#9ca3af' }}>
-                        {onlineUsers.has(u.id) ? 'Onlayn' : 'Oflayn'}
+
+                      <small
+                        style={{
+                          display: 'block',
+                          fontSize: 11,
+                          color: onlineUsers.has(u.id)
+                            ? '#16a34a'
+                            : '#9ca3af',
+                        }}
+                      >
+                        {onlineUsers.has(u.id)
+                          ? t('online')
+                          : t('offline')}
                       </small>
                     </span>
-
                   </button>
                 ))}
             </div>
@@ -467,40 +612,59 @@ export default function Page() {
           <div className="chat-header">
             <div>
               <h2>
-                {active?.members?.find((x) => x.user.id !== me?.id)?.user.displayName ||
-                  'Mesajlar'}
+                {active?.members?.find(
+                  (x) => x.user.id !== me?.id
+                )?.user.displayName || t('messages')}
               </h2>
-              {active && (() => {
-                const otherId = active.members.find((x) => x.user.id !== me?.id)?.user.id;
-                return <small style={{ color: onlineUsers.has(otherId || '') ? '#16a34a' : '#9ca3af' }}>
-                  {onlineUsers.has(otherId || '') ? '● Onlayn' : '● Oflayn'}
-                </small>;
-              })()}
+
+              {active &&
+                (() => {
+                  const otherId = active.members.find(
+                    (x) => x.user.id !== me?.id
+                  )?.user.id;
+
+                  return (
+                    <small
+                      style={{
+                        color: onlineUsers.has(otherId || '')
+                          ? '#16a34a'
+                          : '#9ca3af',
+                      }}
+                    >
+                      {onlineUsers.has(otherId || '')
+                        ? `● ${t('online')}`
+                        : `● ${t('offline')}`}
+                    </small>
+                  );
+                })()}
             </div>
 
             {active && (
               <div className="actions">
                 <button
                   className="btn"
-                  onClick={() =>
-                    startCall(
-                      active.members.find((x) => x.user.id !== me?.id)!.user,
-                      'AUDIO'
-                    )
-                  }
+                  onClick={() => {
+                    const other = active.members.find(
+                      (x) => x.user.id !== me?.id
+                    )?.user;
+
+                    if (other) startCall(other, 'AUDIO');
+                  }}
                 >
-                  Səsli zəng
+                  {t('voiceCall')}
                 </button>
+
                 <button
                   className="btn primary"
-                  onClick={() =>
-                    startCall(
-                      active.members.find((x) => x.user.id !== me?.id)!.user,
-                      'VIDEO'
-                    )
-                  }
+                  onClick={() => {
+                    const other = active.members.find(
+                      (x) => x.user.id !== me?.id
+                    )?.user;
+
+                    if (other) startCall(other, 'VIDEO');
+                  }}
                 >
-                  Video zəng
+                  {t('videoCall')}
                 </button>
               </div>
             )}
@@ -510,7 +674,9 @@ export default function Page() {
             {msgs.map((m) => (
               <div
                 key={m.id}
-                className={`bubble ${m.senderId === me?.id ? 'mine' : ''}`}
+                className={`bubble ${
+                  m.senderId === me?.id ? 'mine' : ''
+                }`}
               >
                 {m.body}
               </div>
@@ -522,29 +688,33 @@ export default function Page() {
               <input
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                placeholder="Mesaj yazın..."
+                placeholder={t('typeMessage')}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && draft.trim()) {
                     sock.current?.emit('message:send', {
                       conversationId: active.id,
                       body: draft,
                     });
+
                     setDraft('');
                   }
                 }}
               />
+
               <button
                 className="btn primary"
                 onClick={() => {
                   if (!draft.trim()) return;
+
                   sock.current?.emit('message:send', {
                     conversationId: active.id,
                     body: draft,
                   });
+
                   setDraft('');
                 }}
               >
-                Göndər
+                {t('send')}
               </button>
             </div>
           )}
@@ -553,24 +723,25 @@ export default function Page() {
         </main>
       </div>
 
-      {/* ========== CALL UI ========== */}
+      {/* CALL UI */}
       {(incoming || call) && (
         <div className="call-overlay">
           <div className="call-card">
             <h2>
               {incoming
-                ? 'Gələn zəng'
+                ? t('incomingCall')
                 : call?.role === 'caller'
-                  ? 'Zəng edilir...'
-                  : 'Zəng aktivdir'}
+                  ? t('calling')
+                  : t('callActive')}
             </h2>
 
             {incoming?.callerName && (
-              <p className="caller-name">{incoming.callerName}</p>
+              <p className="caller-name">
+                {incoming.callerName}
+              </p>
             )}
 
             <div className="videos">
-              {/* Remote video */}
               <video
                 ref={remoteVideoRef}
                 className="remote"
@@ -578,7 +749,6 @@ export default function Page() {
                 playsInline
               />
 
-              {/* Local video (kiçik) */}
               <video
                 ref={localVideoRef}
                 className="local"
@@ -594,30 +764,40 @@ export default function Page() {
                   <button
                     className="btn primary large"
                     onClick={() => {
-                      setCall({ ...incoming, role: 'callee' });
+                      setCall({
+                        ...incoming,
+                        role: 'callee',
+                      });
+
                       setIncoming(null);
+
                       sock.current?.emit('call:accept', {
                         callId: incoming.id,
                       });
                     }}
                   >
-                    Qəbul et
+                    {t('accept')}
                   </button>
+
                   <button
                     className="btn danger large"
                     onClick={() => {
                       sock.current?.emit('call:reject', {
                         callId: incoming.id,
                       });
+
                       setIncoming(null);
                     }}
                   >
-                    Rədd et
+                    {t('reject')}
                   </button>
                 </>
               ) : (
-                <button className="btn danger large" onClick={() => end()}>
-                  Bitir
+                <button
+                  className="btn danger large"
+                  onClick={() => end()}
+                >
+                  {t('endCall')}
                 </button>
               )}
             </div>
