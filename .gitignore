@@ -116,3 +116,7 @@ xcuserdata/
 Thumbs.db
 desktop.ini
 
+
+# Firebase credentials
+**/google-services.json
+**/GoogleService-Info.plist
