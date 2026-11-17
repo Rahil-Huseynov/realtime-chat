@@ -47,7 +47,7 @@ export class AuthService {
       secure: false,
     });
 
-    const url = `${process.env.APP_URL || 'http://localhost:3000'}/verify?token=${token}`;
+    const url = `${process.env.APP_URL || 'http://localhost:3000'}/az/verify?token=${token}`;
 
     await transport.sendMail({
       from: process.env.MAIL_FROM || 'Realtime Chat <noreply@example.test>',

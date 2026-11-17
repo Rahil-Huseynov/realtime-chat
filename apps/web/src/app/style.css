@@ -451,3 +451,105 @@ input {
   border-radius: 2px;
   background: #3b82f6;
 }
+
+/* Mesajlar siyahısı */
+.inbox {
+  width: 100%;
+  height: 100%;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.inbox-heading h2 {
+  margin: 0 0 8px;
+}
+
+.inbox-heading p,
+.inbox-empty {
+  color: var(--text-muted);
+}
+
+.inbox-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.inbox-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 14px;
+  text-align: left;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  cursor: pointer;
+}
+
+.inbox-item:hover {
+  border-color: #3b82f6;
+}
+
+.inbox-item.unread {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: #3b82f6;
+}
+
+.inbox-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: 1;
+}
+
+.inbox-item-info small {
+  color: var(--text-muted);
+}
+
+.unread-dot {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #3b82f6;
+}
+
+.conversation-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.unread-badge {
+  padding: 3px 7px;
+  border-radius: 10px;
+  color: white;
+  background: #2563eb;
+  font-size: 10px;
+}
+
+.close-chat {
+  min-width: 38px;
+  font-size: 18px;
+  padding: 8px 12px;
+}
+
+@media (max-width: 768px) {
+  .chat-header .actions {
+    gap: 5px;
+    flex-wrap: wrap;
+  }
+
+  .chat-header .actions .btn {
+    padding: 8px;
+    font-size: 12px;
+  }
+
+  .inbox {
+    padding: 16px;
+  }
+}

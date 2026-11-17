@@ -38,6 +38,7 @@ export default function Page() {
   const [incoming, setIncoming] = useState<any>(null);
   const [call, setCall] = useState<any>(null);
   const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
+  const [unreadConvs, setUnreadConvs] = useState<Set<string>>(new Set());
 
   const sock = useRef<Socket | null>(null);
   const pc = useRef<RTCPeerConnection | null>(null);
@@ -131,6 +132,12 @@ export default function Page() {
     s.on('message:new', (m: any) => {
       if (active?.id === m.conversationId) {
         setMsgs((v) => [...v, m]);
+      } else if (m.senderId !== me?.id) {
+        setUnreadConvs((previous) => {
+          const next = new Set(previous);
+          next.add(m.conversationId);
+          return next;
+        });
       }
 
       load().catch(() => {});
@@ -525,14 +532,24 @@ export default function Page() {
                     className={`list-item ${
                       active?.id === c.id ? 'active' : ''
                     }`}
-                    onClick={() => setActive(c)}
+                    onClick={() => {
+                      setActive(c);
+                      setUnreadConvs((previous) => {
+                        const next = new Set(previous);
+                        next.delete(c.id);
+                        return next;
+                      });
+                    }}
                   >
                     <div className="avatar">
                       {other?.displayName?.[0] || '?'}
                     </div>
 
-                    <span>
+                    <span className="conversation-name">
                       {other?.displayName || t('unknownUser')}
+                      {unreadConvs.has(c.id) && (
+                        <span className="unread-badge">Yeni</span>
+                      )}
                     </span>
                   </button>
                 );
@@ -558,6 +575,11 @@ export default function Page() {
 
                         await load();
                         setActive(c);
+                        setUnreadConvs((previous) => {
+                          const next = new Set(previous);
+                          next.delete(c.id);
+                          return next;
+                        });
                       } catch (e: any) {
                         setStatus(e.message);
                       }
@@ -609,114 +631,166 @@ export default function Page() {
         </aside>
 
         <main className="chat">
-          <div className="chat-header">
-            <div>
-              <h2>
-                {active?.members?.find(
-                  (x) => x.user.id !== me?.id
-                )?.user.displayName || t('messages')}
-              </h2>
+          {!active ? (
+            <div className="inbox">
+              <div className="inbox-heading">
+                <h2>{t('messages')}</h2>
+                <p>Söhbətlərini görmək üçün birini seç.</p>
+              </div>
 
-              {active &&
-                (() => {
-                  const otherId = active.members.find(
-                    (x) => x.user.id !== me?.id
-                  )?.user.id;
-
-                  return (
-                    <small
-                      style={{
-                        color: onlineUsers.has(otherId || '')
-                          ? '#16a34a'
-                          : '#9ca3af',
-                      }}
-                    >
-                      {onlineUsers.has(otherId || '')
-                        ? `● ${t('online')}`
-                        : `● ${t('offline')}`}
-                    </small>
-                  );
-                })()}
-            </div>
-
-            {active && (
-              <div className="actions">
-                <button
-                  className="btn"
-                  onClick={() => {
-                    const other = active.members.find(
+              {convs.length === 0 ? (
+                <p className="inbox-empty">Hələ heç bir söhbətin yoxdur.</p>
+              ) : (
+                <div className="inbox-list">
+                  {convs.map((c) => {
+                    const other = c.members?.find(
                       (x) => x.user.id !== me?.id
                     )?.user;
+                    const isUnread = unreadConvs.has(c.id);
 
-                    if (other) startCall(other, 'AUDIO');
+                    return (
+                      <button
+                        key={c.id}
+                        className={`inbox-item ${isUnread ? 'unread' : ''}`}
+                        onClick={() => {
+                          setActive(c);
+                          setUnreadConvs((previous) => {
+                            const next = new Set(previous);
+                            next.delete(c.id);
+                            return next;
+                          });
+                        }}
+                      >
+                        <div className="avatar">
+                          {other?.displayName?.[0] || '?'}
+                        </div>
+                        <div className="inbox-item-info">
+                          <strong>{other?.displayName || t('unknownUser')}</strong>
+                          <small>
+                            {isUnread ? 'Yeni mesajın var' : 'Söhbəti aç'}
+                          </small>
+                        </div>
+                        {isUnread && <span className="unread-dot" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="chat-header">
+                <div>
+                  <h2>
+                    {active.members?.find(
+                      (x) => x.user.id !== me?.id
+                    )?.user.displayName || t('messages')}
+                  </h2>
+
+                  {(() => {
+                    const otherId = active.members?.find(
+                      (x) => x.user.id !== me?.id
+                    )?.user.id;
+
+                    return (
+                      <small
+                        style={{
+                          color: onlineUsers.has(otherId || '')
+                            ? '#16a34a'
+                            : '#9ca3af',
+                        }}
+                      >
+                        {onlineUsers.has(otherId || '')
+                          ? `● ${t('online')}`
+                          : `● ${t('offline')}`}
+                      </small>
+                    );
+                  })()}
+                </div>
+
+                <div className="actions">
+                  <button
+                    className="btn"
+                    onClick={() => {
+                      const other = active.members.find(
+                        (x) => x.user.id !== me?.id
+                      )?.user;
+                      if (other) startCall(other, 'AUDIO');
+                    }}
+                  >
+                    {t('voiceCall')}
+                  </button>
+
+                  <button
+                    className="btn primary"
+                    onClick={() => {
+                      const other = active.members.find(
+                        (x) => x.user.id !== me?.id
+                      )?.user;
+                      if (other) startCall(other, 'VIDEO');
+                    }}
+                  >
+                    {t('videoCall')}
+                  </button>
+
+                  <button
+                    className="btn close-chat"
+                    title="Mesajlar siyahısına qayıt"
+                    aria-label="Söhbəti bağla"
+                    onClick={() => {
+                      setActive(null);
+                      setDraft('');
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+
+              <div className="messages">
+                {msgs.map((m) => (
+                  <div
+                    key={m.id}
+                    className={`bubble ${
+                      m.senderId === me?.id ? 'mine' : ''
+                    }`}
+                  >
+                    {m.body}
+                  </div>
+                ))}
+              </div>
+
+              <div className="composer">
+                <input
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  placeholder={t('typeMessage')}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && draft.trim()) {
+                      sock.current?.emit('message:send', {
+                        conversationId: active.id,
+                        body: draft,
+                      });
+                      setDraft('');
+                    }
                   }}
-                >
-                  {t('voiceCall')}
-                </button>
+                />
 
                 <button
                   className="btn primary"
                   onClick={() => {
-                    const other = active.members.find(
-                      (x) => x.user.id !== me?.id
-                    )?.user;
-
-                    if (other) startCall(other, 'VIDEO');
-                  }}
-                >
-                  {t('videoCall')}
-                </button>
-              </div>
-            )}
-          </div>
-
-          <div className="messages">
-            {msgs.map((m) => (
-              <div
-                key={m.id}
-                className={`bubble ${
-                  m.senderId === me?.id ? 'mine' : ''
-                }`}
-              >
-                {m.body}
-              </div>
-            ))}
-          </div>
-
-          {active && (
-            <div className="composer">
-              <input
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                placeholder={t('typeMessage')}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && draft.trim()) {
+                    if (!draft.trim()) return;
                     sock.current?.emit('message:send', {
                       conversationId: active.id,
                       body: draft,
                     });
-
                     setDraft('');
-                  }
-                }}
-              />
-
-              <button
-                className="btn primary"
-                onClick={() => {
-                  if (!draft.trim()) return;
-
-                  sock.current?.emit('message:send', {
-                    conversationId: active.id,
-                    body: draft,
-                  });
-
-                  setDraft('');
-                }}
-              >
-                {t('send')}
-              </button>
-            </div>
+                  }}
+                >
+                  {t('send')}
+                </button>
+              </div>
+            </>
           )}
 
           {status && <p className="status-bar">{status}</p>}
