@@ -6,7 +6,8 @@
   "scripts": {
     "start": "expo start --dev-client",
     "android": "expo run:android",
-    "prebuild": "expo prebuild --platform android"
+    "prebuild": "expo prebuild --platform android",
+    "ios": "expo run:ios"
   },
   "dependencies": {
     "@react-native-firebase/app": "^23.5.0",
@@ -16,6 +17,7 @@
     "expo-router": "~6.0.14",
     "expo-secure-store": "~15.0.8",
     "react": "19.1.0",
+    "react-dom": "19.1.0",
     "react-native": "0.81.5",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",

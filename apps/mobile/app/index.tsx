@@ -19,15 +19,18 @@ import * as SecureStore from 'expo-secure-store';
 import { requireNativeModule } from 'expo-modules-core';
 import { io, Socket } from 'socket.io-client';
 import { mediaDevices, RTCPeerConnection, RTCView } from 'react-native-webrtc';
+import { useLocale } from '../i18n';
+import LanguageSwitcher from '../components/LanguageSwitcher';
 
 const CallPush = requireNativeModule('CallPush');
-
 const API = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:4000';
 
 type User = { id: string; email: string; displayName: string };
 type Conv = { id: string; members: { user: User }[]; messages: any[] };
 
 export default function Index() {
+  const { t, ready } = useLocale();
+
   const [token, setToken] = useState('');
   const [me, setMe] = useState<User | null>(null);
   const [email, setEmail] = useState('');
@@ -36,16 +39,20 @@ export default function Index() {
   const [register, setRegister] = useState(false);
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(false);
+
   const [users, setUsers] = useState<User[]>([]);
   const [convs, setConvs] = useState<Conv[]>([]);
   const [active, setActive] = useState<Conv | null>(null);
   const [messages, setMessages] = useState<any[]>([]);
   const [draft, setDraft] = useState('');
+
   const [incoming, setIncoming] = useState<any>(null);
   const [call, setCall] = useState<any>(null);
   const [remote, setRemote] = useState('');
   const [local, setLocal] = useState('');
+
   const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
+  const [unreadConvs, setUnreadConvs] = useState<Set<string>>(new Set());
 
   const socket = useRef<Socket | null>(null);
   const pc = useRef<any>(null);
@@ -56,7 +63,6 @@ export default function Index() {
 
   callRef.current = call;
 
-  // ========== AUTH HELPERS ==========
   const request = useCallback(
     async (path: string, method = 'GET', body?: any) => {
       const r = await fetch(`${API}${path}`, {
@@ -68,20 +74,20 @@ export default function Index() {
         body: body ? JSON.stringify(body) : undefined,
       });
       const d = await r.json();
-      if (!r.ok) throw new Error(d.message || 'Sorğu uğursuz oldu');
+      if (!r.ok) throw new Error(d.message || t('error'));
       return d;
     },
-    [token]
+    [token, t]
   );
 
-  async function registerDevice(t: string) {
+  async function registerDevice(tkn: string) {
     try {
       const f = await CallPush.getToken();
       await fetch(`${API}/devices`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${t}`,
+          Authorization: `Bearer ${tkn}`,
         },
         body: JSON.stringify({ fcmToken: f }),
       });
@@ -90,33 +96,31 @@ export default function Index() {
     }
   }
 
-  // ========== SESSION ==========
+  // SESSION
   useEffect(() => {
-    SecureStore.getItemAsync('accessToken')
-      .then(async (saved) => {
-        if (saved) {
-          setToken(saved);
-          try {
-            const r = await fetch(`${API}/auth/me`, {
-              headers: { Authorization: `Bearer ${saved}` },
-            });
-            if (r.ok) {
-              const user = await r.json();
-              setMe(user);
-              await registerDevice(saved);
-            } else {
-              await SecureStore.deleteItemAsync('accessToken');
-              setToken('');
-            }
-          } catch {
-            // ignore
+    SecureStore.getItemAsync('accessToken').then(async (saved) => {
+      if (saved) {
+        setToken(saved);
+        try {
+          const r = await fetch(`${API}/auth/me`, {
+            headers: { Authorization: `Bearer ${saved}` },
+          });
+          if (r.ok) {
+            const user = await r.json();
+            setMe(user);
+            await registerDevice(saved);
+          } else {
+            await SecureStore.deleteItemAsync('accessToken');
+            setToken('');
           }
+        } catch {
+          // ignore
         }
-      })
-      .catch(() => {});
+      }
+    });
   }, []);
 
-  // ========== SOCKET + PRESENCE ==========
+  // SOCKET
   useEffect(() => {
     if (!token) return;
 
@@ -130,22 +134,19 @@ export default function Index() {
     socket.current = s;
 
     s.on('connect', () => {
-      const pendingCall = pending.current;
-      if (pendingCall?.accepted) {
-        s.emit('call:accept', { callId: pendingCall.callId });
-        setCall(pendingCall.call);
-        callRef.current = pendingCall.call;
+      const p = pending.current;
+      if (p?.accepted) {
+        s.emit('call:accept', { callId: p.callId });
+        setCall(p.call);
+        callRef.current = p.call;
         pending.current = null;
-      } else if (pendingCall?.rejected) {
-        s.emit('call:reject', { callId: pendingCall.callId });
+      } else if (p?.rejected) {
+        s.emit('call:reject', { callId: p.callId });
         pending.current = null;
       }
     });
 
-    // Presence (web-dən gələn xüsusiyyət)
-    s.on('presence:snapshot', (ids: string[]) => {
-      setOnlineUsers(new Set(ids));
-    });
+    s.on('presence:snapshot', (ids: string[]) => setOnlineUsers(new Set(ids)));
 
     s.on('presence:update', ({ userId, online }: { userId: string; online: boolean }) => {
       setOnlineUsers((prev) => {
@@ -159,13 +160,19 @@ export default function Index() {
     s.on('message:new', (m: any) => {
       if (active?.id === m.conversationId) {
         setMessages((v) => [...v, m]);
+      } else if (m.senderId !== me?.id) {
+        setUnreadConvs((prev) => {
+          const next = new Set(prev);
+          next.add(m.conversationId);
+          return next;
+        });
       }
       load().catch(() => {});
     });
 
     s.on('call:incoming', (v: any) => {
       setIncoming(v);
-      setStatus('Gələn zəng: ' + (v.callerName || 'naməlum'));
+      setStatus(`${t('incomingCall')}: ${v.callerName || t('unknownUser')}`);
     });
 
     s.on('call:accepted', async ({ callId }: any) => {
@@ -182,8 +189,8 @@ export default function Index() {
           if (!pc.current) await startPeer(callRef.current, false);
           await pc.current.setRemoteDescription(signal);
 
-          for (const candidate of iceQueue.current) {
-            await pc.current.addIceCandidate(candidate);
+          for (const c of iceQueue.current) {
+            await pc.current.addIceCandidate(c);
           }
           iceQueue.current = [];
 
@@ -195,8 +202,8 @@ export default function Index() {
           });
         } else if (signal?.type === 'answer' && pc.current) {
           await pc.current.setRemoteDescription(signal);
-          for (const candidate of iceQueue.current) {
-            await pc.current.addIceCandidate(candidate);
+          for (const c of iceQueue.current) {
+            await pc.current.addIceCandidate(c);
           }
           iceQueue.current = [];
         } else if (signal?.candidate) {
@@ -213,11 +220,11 @@ export default function Index() {
 
     s.on('call:ended', () => finish(false));
     s.on('call:expired', () => {
-      setStatus('Zəngə cavab verilmədi');
+      setStatus(t('noAnswer'));
       finish(false);
     });
     s.on('call:rejected', () => {
-      Alert.alert('Zəng', 'Qarşı tərəf zəngi rədd etdi');
+      Alert.alert(t('appName'), t('callRejected'));
       finish(false);
     });
 
@@ -225,7 +232,7 @@ export default function Index() {
       s.disconnect();
       socket.current = null;
     };
-  }, [token, active?.id]);
+  }, [token, active?.id, me?.id, t]);
 
   // Messages
   useEffect(() => {
@@ -233,10 +240,12 @@ export default function Index() {
       request(`/conversations/${active.id}/messages`)
         .then(setMessages)
         .catch((e) => setStatus(e.message));
+    } else {
+      setMessages([]);
     }
   }, [active?.id, token]);
 
-  // Deep link (notification-dan accept/reject)
+  // Deep link
   useEffect(() => {
     const handle = (url: string) => {
       try {
@@ -254,7 +263,7 @@ export default function Index() {
                 id,
                 type: u.searchParams.get('type') || 'AUDIO',
                 role: 'callee',
-                callerName: u.searchParams.get('caller') || 'Zəng',
+                callerName: u.searchParams.get('caller') || t('incomingCall'),
               },
             };
             setCall(pending.current.call);
@@ -278,9 +287,8 @@ export default function Index() {
     Linking.getInitialURL().then((u) => u && handle(u));
     const sub = Linking.addEventListener('url', (e) => handle(e.url));
     return () => sub.remove();
-  }, []);
+  }, [t]);
 
-  // ========== ACTIONS ==========
   async function load() {
     const [u, c] = await Promise.all([request('/users'), request('/conversations')]);
     setUsers(u);
@@ -295,7 +303,7 @@ export default function Index() {
       setMe(d.user);
       await SecureStore.setItemAsync('accessToken', d.accessToken);
       await registerDevice(d.accessToken);
-      setStatus('Daxil oldunuz');
+      setStatus('');
     } catch (e: any) {
       setStatus(e.message);
     } finally {
@@ -311,7 +319,7 @@ export default function Index() {
         password,
         displayName: name,
       });
-      setStatus(d.message + ' — Mailpit: http://localhost:8025');
+      setStatus(d.message || t('registrationSuccess'));
     } catch (e: any) {
       setStatus(e.message);
     } finally {
@@ -325,9 +333,24 @@ export default function Index() {
       await load();
       setActive(c);
       setMessages([]);
+      setUnreadConvs((prev) => {
+        const next = new Set(prev);
+        next.delete(c.id);
+        return next;
+      });
     } catch (e: any) {
       setStatus(e.message);
     }
+  }
+
+  function openExistingChat(c: Conv) {
+    setActive(c);
+    setMessages([]);
+    setUnreadConvs((prev) => {
+      const next = new Set(prev);
+      next.delete(c.id);
+      return next;
+    });
   }
 
   async function send() {
@@ -341,14 +364,14 @@ export default function Index() {
 
   async function startCall(user: User, type: 'AUDIO' | 'VIDEO') {
     try {
-      setStatus(type === 'VIDEO' ? 'Video zəng başladılır...' : 'Səsli zəng başladılır...');
+      setStatus(type === 'VIDEO' ? t('startingVideoCall') : t('startingVoiceCall'));
       const c = await request('/calls', 'POST', { calleeId: user.id, type });
       const next = { ...c, type, role: 'caller', targetId: user.id };
       callRef.current = next;
       setCall(next);
       setStatus('');
     } catch (e: any) {
-      setStatus(e.message);
+      setStatus(`${t('callError')}: ${e.message}`);
     }
   }
 
@@ -364,7 +387,7 @@ export default function Index() {
       if (Platform.OS === 'android') {
         const granted = await PermissionsAndroid.requestMultiple(needed);
         if (needed.some((p) => granted[p] !== PermissionsAndroid.RESULTS.GRANTED)) {
-          throw new Error('Mikrofon və kamera icazəsi verilməyib');
+          throw new Error(t('permissionDenied'));
         }
       }
 
@@ -395,7 +418,7 @@ export default function Index() {
 
       await CallPush.startCallService(c.type);
 
-      media.getTracks().forEach((t: any) => peer.addTrack(t, media));
+      media.getTracks().forEach((track: any) => peer.addTrack(track, media));
 
       if (initiator) {
         const offer = await peer.createOffer();
@@ -407,7 +430,7 @@ export default function Index() {
       }
     } catch (e: any) {
       console.warn(e);
-      setStatus(e.message || 'Media xətası');
+      setStatus(e.message || t('mediaError'));
       finish(false);
     }
   }
@@ -437,7 +460,7 @@ export default function Index() {
     setIncoming(null);
   }
 
-  // ========== UI COMPONENTS ==========
+  // UI helpers
   const Btn = ({
     label,
     onPress,
@@ -455,13 +478,7 @@ export default function Index() {
   }) => (
     <Pressable
       onPress={onPress}
-      style={[
-        s.button,
-        primary && s.primary,
-        danger && s.danger,
-        small && s.buttonSmall,
-        style,
-      ]}
+      style={[s.button, primary && s.primary, danger && s.danger, small && s.buttonSmall, style]}
     >
       <Text style={s.buttonText}>{label}</Text>
     </Pressable>
@@ -478,19 +495,31 @@ export default function Index() {
     </View>
   );
 
-  // ========== AUTH SCREEN ==========
+  if (!ready) {
+    return (
+      <SafeAreaView style={s.center}>
+        <ActivityIndicator color="#5b7cfa" size="large" />
+      </SafeAreaView>
+    );
+  }
+
+  // AUTH SCREEN
   if (!token) {
     return (
       <SafeAreaView style={s.center}>
         <StatusBar barStyle="light-content" />
         <View style={s.authCard}>
-          <Text style={s.logo}>Realtime Chat</Text>
-          <Text style={s.heading}>{register ? 'Qeydiyyat' : 'Daxil ol'}</Text>
+          <View style={{ alignItems: 'flex-end', marginBottom: 12 }}>
+            <LanguageSwitcher />
+          </View>
+
+          <Text style={s.logo}>{t('appName')}</Text>
+          <Text style={s.heading}>{register ? t('register') : t('login')}</Text>
 
           {register && (
             <TextInput
               style={s.input}
-              placeholder="Ad və soyad"
+              placeholder={t('displayName')}
               placeholderTextColor="#8b9bb4"
               value={name}
               onChangeText={setName}
@@ -498,7 +527,7 @@ export default function Index() {
           )}
           <TextInput
             style={s.input}
-            placeholder="E-poçt"
+            placeholder={t('email')}
             placeholderTextColor="#8b9bb4"
             autoCapitalize="none"
             keyboardType="email-address"
@@ -507,7 +536,7 @@ export default function Index() {
           />
           <TextInput
             style={s.input}
-            placeholder="Şifrə (min. 10 simvol)"
+            placeholder={t('password')}
             placeholderTextColor="#8b9bb4"
             secureTextEntry
             value={password}
@@ -515,13 +544,13 @@ export default function Index() {
           />
 
           <Btn
-            label={register ? 'Qeydiyyatdan keç' : 'Daxil ol'}
+            label={register ? t('register') : t('login')}
             onPress={register ? signup : login}
             primary
             style={{ marginTop: 8 }}
           />
           <Btn
-            label={register ? 'Girişə qayıt' : 'Yeni hesab yarat'}
+            label={register ? t('backToLogin') : t('createAccount')}
             onPress={() => setRegister(!register)}
             style={{ marginTop: 10 }}
           />
@@ -533,24 +562,26 @@ export default function Index() {
     );
   }
 
-  // ========== MAIN APP ==========
+  // MAIN APP
   return (
     <SafeAreaView style={s.page}>
       <StatusBar barStyle="light-content" />
 
-      {/* Top bar */}
       <View style={s.topbar}>
-        <Text style={s.logoSmall}>Realtime</Text>
+        <Text style={s.logoSmall}>{t('appName')}</Text>
         <View style={s.userInfo}>
-          <Text style={s.muted}>{me?.displayName || 'Hesab'}</Text>
+          <LanguageSwitcher />
+          <Text style={s.muted}>{me?.displayName || '—'}</Text>
           <Btn
-            label="Çıxış"
+            label={t('logout')}
             small
             onPress={async () => {
+              finish(false);
               await SecureStore.deleteItemAsync('accessToken');
               setToken('');
               setMe(null);
               setActive(null);
+              setUnreadConvs(new Set());
               socket.current?.disconnect();
             }}
           />
@@ -558,7 +589,6 @@ export default function Index() {
       </View>
 
       {active ? (
-        // ========== CHAT VIEW ==========
         <KeyboardAvoidingView
           style={{ flex: 1 }}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -567,14 +597,14 @@ export default function Index() {
             <Btn label="‹" small onPress={() => setActive(null)} style={{ paddingHorizontal: 12 }} />
             <View style={{ flex: 1, marginLeft: 8 }}>
               <Text style={s.chatTitle} numberOfLines={1}>
-                {active.members.find((x) => x.user.id !== me?.id)?.user.displayName || 'Söhbət'}
+                {active.members.find((x) => x.user.id !== me?.id)?.user.displayName || t('messages')}
               </Text>
               {(() => {
                 const otherId = active.members.find((x) => x.user.id !== me?.id)?.user.id;
                 const isOnline = otherId ? onlineUsers.has(otherId) : false;
                 return (
                   <Text style={[s.onlineText, isOnline ? s.onlineColor : s.offlineColor]}>
-                    {isOnline ? '● Onlayn' : '● Oflayn'}
+                    ● {isOnline ? t('online') : t('offline')}
                   </Text>
                 );
               })()}
@@ -616,60 +646,69 @@ export default function Index() {
           <View style={s.composer}>
             <TextInput
               style={[s.input, { flex: 1, marginVertical: 0 }]}
-              placeholder="Mesaj yazın..."
+              placeholder={t('typeMessage')}
               placeholderTextColor="#8b9bb4"
               value={draft}
               onChangeText={setDraft}
               onSubmitEditing={send}
               returnKeyType="send"
             />
-            <Btn label="Göndər" primary onPress={send} style={{ marginLeft: 8 }} />
+            <Btn label={t('send')} primary onPress={send} style={{ marginLeft: 8 }} />
           </View>
         </KeyboardAvoidingView>
       ) : (
-        // ========== LIST VIEW ==========
         <>
-          <View style={s.row}>
+          <View style={[s.row, { paddingHorizontal: 16, marginTop: 8 }]}>
             <Btn
-              label="Zəng ekranı icazəsi"
+              label={t('fullScreenPermission')}
               small
               onPress={async () => {
                 const ok = await CallPush.canUseFullScreenIntent();
                 if (!ok) await CallPush.openFullScreenIntentSettings();
-                else Alert.alert('İcazə aktivdir', 'Android tam ekran zəng bildirişlərinə icazə verir.');
+                else Alert.alert(t('fullScreenActive'), t('fullScreenActiveDesc'));
               }}
             />
           </View>
 
-          <Text style={s.section}>Söhbətlər</Text>
+          <Text style={s.section}>{t('conversations')}</Text>
           <FlatList
             style={{ maxHeight: '38%' }}
             data={convs}
             keyExtractor={(x) => x.id}
+            ListEmptyComponent={
+              <Text style={[s.muted, { paddingHorizontal: 16 }]}>{t('noConversations')}</Text>
+            }
             renderItem={({ item }) => {
               const other = item.members.find((x) => x.user.id !== me?.id)?.user;
               const isOnline = other ? onlineUsers.has(other.id) : false;
+              const isUnread = unreadConvs.has(item.id);
+
               return (
                 <Pressable
-                  style={s.listItem}
-                  onPress={() => {
-                    setActive(item);
-                    setMessages([]);
-                  }}
+                  style={[s.listItem, isUnread && s.listItemUnread]}
+                  onPress={() => openExistingChat(item)}
                 >
                   <Avatar name={other?.displayName} online={isOnline} />
                   <View style={{ flex: 1 }}>
-                    <Text style={s.listTitle}>{other?.displayName || 'Söhbət'}</Text>
+                    <View style={s.rowBetween}>
+                      <Text style={s.listTitle}>{other?.displayName || t('unknownUser')}</Text>
+                      {isUnread && (
+                        <View style={s.unreadBadge}>
+                          <Text style={s.unreadBadgeText}>{t('newMessage')}</Text>
+                        </View>
+                      )}
+                    </View>
                     <Text style={s.muted} numberOfLines={1}>
-                      {item.messages?.[0]?.body || 'Yeni söhbət'}
+                      {item.messages?.[0]?.body || t('openChat')}
                     </Text>
                   </View>
+                  {isUnread && <View style={s.unreadDot} />}
                 </Pressable>
               );
             }}
           />
 
-          <Text style={s.section}>İstifadəçilər</Text>
+          <Text style={s.section}>{t('users')}</Text>
           <FlatList
             data={users.filter((u) => u.id !== me?.id)}
             keyExtractor={(x) => x.id}
@@ -681,7 +720,7 @@ export default function Index() {
                   <View style={{ flex: 1 }}>
                     <Text style={s.listTitle}>{item.displayName}</Text>
                     <Text style={[s.onlineText, isOnline ? s.onlineColor : s.offlineColor]}>
-                      {isOnline ? 'Onlayn' : 'Oflayn'}
+                      {isOnline ? t('online') : t('offline')}
                     </Text>
                   </View>
                 </Pressable>
@@ -691,26 +730,28 @@ export default function Index() {
         </>
       )}
 
-      {!!status && <Text style={[s.muted, { paddingHorizontal: 16, paddingBottom: 8 }]}>{status}</Text>}
+      {!!status && (
+        <Text style={[s.muted, { paddingHorizontal: 16, paddingBottom: 8 }]}>{status}</Text>
+      )}
 
-      {/* ========== CALL OVERLAY ========== */}
+      {/* CALL OVERLAY */}
       {(incoming || call) && (
         <View style={s.overlay}>
           <View style={s.callCard}>
             <Text style={s.heading}>
               {incoming
-                ? 'Gələn zəng'
+                ? t('incomingCall')
                 : call?.role === 'caller'
-                ? 'Zəng edilir...'
-                : 'Zəng aktivdir'}
+                ? t('calling')
+                : t('callActive')}
             </Text>
-            <Text style={s.muted}>{incoming?.callerName || 'Zəng'}</Text>
+            <Text style={s.muted}>{incoming?.callerName || t('incomingCall')}</Text>
 
             {remote ? (
               <RTCView streamURL={remote} style={s.video} objectFit="cover" />
             ) : (
               <View style={[s.video, { justifyContent: 'center', alignItems: 'center' }]}>
-                <Text style={s.muted}>Gözlənilir...</Text>
+                <Text style={s.muted}>…</Text>
               </View>
             )}
 
@@ -721,9 +762,9 @@ export default function Index() {
             <View style={[s.row, { marginTop: 20, gap: 12 }]}>
               {incoming ? (
                 <>
-                  <Btn label="Qəbul et" primary onPress={accept} style={{ minWidth: 120 }} />
+                  <Btn label={t('accept')} primary onPress={accept} style={{ minWidth: 120 }} />
                   <Btn
-                    label="Rədd et"
+                    label={t('reject')}
                     danger
                     onPress={() => {
                       socket.current?.emit('call:reject', { callId: incoming.id });
@@ -733,7 +774,7 @@ export default function Index() {
                   />
                 </>
               ) : (
-                <Btn label="Zəngi bitir" danger onPress={() => finish()} style={{ minWidth: 160 }} />
+                <Btn label={t('endCall')} danger onPress={() => finish()} style={{ minWidth: 160 }} />
               )}
             </View>
           </View>
@@ -743,18 +784,10 @@ export default function Index() {
   );
 }
 
-// ========== STYLES (müasir dark theme – web ilə uyğun) ==========
+// STYLES (web ilə uyğun dark theme)
 const s = StyleSheet.create({
-  page: {
-    flex: 1,
-    backgroundColor: '#0b0f1a',
-  },
-  center: {
-    flex: 1,
-    justifyContent: 'center',
-    padding: 24,
-    backgroundColor: '#0b0f1a',
-  },
+  page: { flex: 1, backgroundColor: '#0b0f1a' },
+  center: { flex: 1, justifyContent: 'center', padding: 24, backgroundColor: '#0b0f1a' },
   authCard: {
     backgroundColor: '#121826',
     borderRadius: 20,
@@ -762,28 +795,10 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#2a3548',
   },
-  logo: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: '#5b7cfa',
-    marginBottom: 4,
-  },
-  logoSmall: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#5b7cfa',
-  },
-  heading: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#e8eef9',
-    marginVertical: 12,
-  },
-  muted: {
-    color: '#8b9bb4',
-    marginTop: 8,
-    fontSize: 13,
-  },
+  logo: { fontSize: 24, fontWeight: '800', color: '#5b7cfa', marginBottom: 4 },
+  logoSmall: { fontSize: 18, fontWeight: '700', color: '#5b7cfa' },
+  heading: { fontSize: 22, fontWeight: '700', color: '#e8eef9', marginVertical: 12 },
+  muted: { color: '#8b9bb4', marginTop: 8, fontSize: 13 },
   input: {
     backgroundColor: '#1a2234',
     borderColor: '#2a3548',
@@ -801,21 +816,10 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  buttonSmall: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-  },
-  primary: {
-    backgroundColor: '#5b7cfa',
-  },
-  danger: {
-    backgroundColor: '#ef4444',
-  },
-  buttonText: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 15,
-  },
+  buttonSmall: { paddingVertical: 8, paddingHorizontal: 12 },
+  primary: { backgroundColor: '#5b7cfa' },
+  danger: { backgroundColor: '#ef4444' },
+  buttonText: { color: '#fff', fontWeight: '600', fontSize: 15 },
   topbar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -826,11 +830,7 @@ const s = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#2a3548',
   },
-  userInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
+  userInfo: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   section: {
     color: '#8b9bb4',
     fontWeight: '700',
@@ -852,14 +852,18 @@ const s = StyleSheet.create({
     marginVertical: 3,
     borderRadius: 14,
   },
-  listTitle: {
-    color: '#e8eef9',
-    fontWeight: '600',
-    fontSize: 15,
+  listItemUnread: { backgroundColor: '#1a2438' },
+  listTitle: { color: '#e8eef9', fontWeight: '600', fontSize: 15 },
+  rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  unreadBadge: {
+    backgroundColor: '#5b7cfa',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
   },
-  avatarWrap: {
-    position: 'relative',
-  },
+  unreadBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  unreadDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#5b7cfa' },
+  avatarWrap: { position: 'relative' },
   avatar: {
     width: 42,
     height: 42,
@@ -868,11 +872,7 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  avatarText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 17,
-  },
+  avatarText: { color: '#fff', fontWeight: '700', fontSize: 17 },
   onlineDot: {
     position: 'absolute',
     right: -1,
@@ -883,22 +883,11 @@ const s = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#121826',
   },
-  online: {
-    backgroundColor: '#22c55e',
-  },
-  offline: {
-    backgroundColor: '#9ca3af',
-  },
-  onlineText: {
-    fontSize: 12,
-    marginTop: 2,
-  },
-  onlineColor: {
-    color: '#22c55e',
-  },
-  offlineColor: {
-    color: '#9ca3af',
-  },
+  online: { backgroundColor: '#22c55e' },
+  offline: { backgroundColor: '#9ca3af' },
+  onlineText: { fontSize: 12, marginTop: 2 },
+  onlineColor: { color: '#22c55e' },
+  offlineColor: { color: '#9ca3af' },
   chatHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -908,11 +897,7 @@ const s = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#2a3548',
   },
-  chatTitle: {
-    color: '#e8eef9',
-    fontSize: 17,
-    fontWeight: '600',
-  },
+  chatTitle: { color: '#e8eef9', fontSize: 17, fontWeight: '600' },
   bubble: {
     alignSelf: 'flex-start',
     maxWidth: '78%',
@@ -929,11 +914,7 @@ const s = StyleSheet.create({
     borderBottomLeftRadius: 16,
     borderBottomRightRadius: 4,
   },
-  bubbleText: {
-    color: '#fff',
-    fontSize: 15,
-    lineHeight: 20,
-  },
+  bubbleText: { color: '#fff', fontSize: 15, lineHeight: 20 },
   composer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -942,10 +923,7 @@ const s = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#2a3548',
   },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
+  row: { flexDirection: 'row', alignItems: 'center' },
   overlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(5, 8, 16, 0.94)',
